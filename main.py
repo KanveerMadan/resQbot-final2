@@ -22,15 +22,14 @@ class InputData(BaseModel):
     depth: float
     mag: float
     gap: float
-    dmin: float
-    rms: float
+    
 
 @app.post("/predict")
 def predict(input_data: InputData):
     try:
         # Prepare and scale features
         features = np.array([[input_data.latitude, input_data.longitude, input_data.depth,
-                              input_data.mag, input_data.gap, input_data.dmin, input_data.rms]])
+                              input_data.mag, input_data.gap ]])
         features_scaled = scaler.transform(features)
 
         # Predict probability
