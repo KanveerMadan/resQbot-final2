@@ -23,7 +23,7 @@ class InputData(BaseModel):
     depth: float
     mag: float
     gap: float
-    time_full: float = None   # Make it optional in case not provided
+    time_full: str = None   # Make it optional in case not provided
 
 
 @app.post("/predict")
