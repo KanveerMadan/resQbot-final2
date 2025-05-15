@@ -47,7 +47,7 @@ def predict(input_data: InputData):
         # Predict time-to-event if earthquake is likely and cap between 0 and 24 hours
         if earthquake_likely:
             hours_until_event = reg_model.predict(features_regression)[0]
-            hours_until_event = max(0, min(hours_until_event, 24))
+            hours_until_event = max(6, min(hours_until_event, 24))
         else:
             hours_until_event = None
 
