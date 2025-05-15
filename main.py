@@ -2,54 +2,57 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import joblib
 import numpy as np
-import pandas as pd
+from datetime import datetime
 
 # Load models and scaler
-scaler = joblib.load("scaler_final.pkl")       # scaler for classification (5 features)
+scaler = joblib.load("scaler_final.pkl")        # For classification features (5)
 lr_model = joblib.load("lr_final.pkl")
 rf_model = joblib.load("rf_final.pkl")
-reg_model = joblib.load("reg_model.pkl")
+reg_model = joblib.load("reg_model.pkl")        # Takes 6 features, including time_full as relative hours
 logistic_model = joblib.load("logistic_model.pkl")
 
-alpha = 0.5        # weight between lr_model and rf_model
-threshold = 0.5    # probability threshold
+alpha = 0.5        # Weight between lr_model and rf_model
+threshold = 0.5    # Probability threshold
 
 app = FastAPI()
 
+# Define input schema
 class InputData(BaseModel):
     latitude: float
     longitude: float
     depth: float
     mag: float
     gap: float
-    time_full: str   # ISO8601 string, e.g. "2025-05-15T12:34:56Z"
+    time_full: float    # Expecting Unix timestamp in seconds
+
 
 @app.post("/predict")
 def predict(input_data: InputData):
     try:
         # Prepare classification features (5 features)
-        features_class = np.array([[input_data.mag, input_data.depth, input_data.latitude, input_data.longitude, input_data.gap]])
-        features_class_scaled = scaler.transform(features_class)
+        features_clf = np.array([[input_data.latitude, input_data.longitude, input_data.depth,
+                                  input_data.mag, input_data.gap]])
+        features_clf_scaled = scaler.transform(features_clf)
 
-        # Predict probabilities from classification models
-        prob_lr = lr_model.predict_proba(features_class_scaled)[:, 1]
-        prob_rf = rf_model.predict_proba(features_class_scaled)[:, 1]
+        # Predict earthquake likelihood using classification models
+        prob_lr = lr_model.predict_proba(features_clf_scaled)[:, 1]
+        prob_rf = rf_model.predict_proba(features_clf_scaled)[:, 1]
         combined_proba = alpha * prob_lr + (1 - alpha) * prob_rf
         earthquake_likely = combined_proba[0] >= threshold
 
-        # Prepare features for regression (5 features including time.full)
-        time_numeric = pd.to_datetime(input_data.time_full).timestamp()
-        features_reg = np.array([[input_data.mag, input_data.depth, input_data.latitude, input_data.longitude, time_numeric]])
+        # Convert time_full (absolute timestamp) to relative hours difference from now
+        now_ts = datetime.utcnow().timestamp()
+        time_diff_hours = (input_data.time_full - now_ts) / 3600.0
 
-        # Scale regression features if your scaler supports 6 features,
-        # otherwise skip scaling or retrain scaler with 6 features.
-        try:
-            features_reg_scaled = scaler.transform(features_reg)
-        except Exception:
-            features_reg_scaled = features_reg  # fallback: no scaling for regression features
+        # Prepare regression features (6 features including time_diff_hours)
+        features_reg = np.array([[input_data.mag, input_data.depth, input_data.latitude,
+                                  input_data.longitude, input_data.gap, time_diff_hours]])
 
-        # Predict time-to-event using regression model if earthquake likely
-        hours_until_event = reg_model.predict(features_reg_scaled)[0] if earthquake_likely else None
+        # Predict time to event if earthquake likely
+        if earthquake_likely:
+            hours_until_event = reg_model.predict(features_reg)[0]
+        else:
+            hours_until_event = None
 
         return {
             "earthquake_likely": bool(earthquake_likely),
