@@ -44,9 +44,9 @@ def predict(input_data: InputData):
         now_ts = datetime.utcnow().timestamp()
         time_diff_hours = (input_data.time_full - now_ts) / 3600.0
 
-        # Prepare regression features (6 features including time_diff_hours)
+        # Prepare regression features (5 features including time_diff_hours)
         features_reg = np.array([[input_data.mag, input_data.depth, input_data.latitude,
-                                  input_data.longitude, input_data.gap, time_diff_hours]])
+                                  input_data.longitude, time_diff_hours]])
 
         # Predict time to event if earthquake likely
         if earthquake_likely:
