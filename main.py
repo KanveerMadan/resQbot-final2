@@ -51,10 +51,11 @@ def predict(input_data: InputData):
         combined_proba = alpha * prob_lr + (1 - alpha) * prob_rf
         earthquake_likely = combined_proba[0] >= threshold
 
-        # Features for regression (6 features including time.full)
+        
         regression_features = ['mag', 'depth', 'latitude', 'longitude', 'gap', 'time.full']
         X_reg = df_sample[regression_features]
         X_reg_scaled = scaler_reg.transform(X_reg)
+        time_to_eq_pred = reg_model.predict(X_reg_scaled)
 
         # Regression prediction only if earthquake likely
         hours_until_event = reg_model.predict(X_reg_scaled)[0] if earthquake_likely else None
