@@ -6,7 +6,6 @@ import pandas as pd
 
 # Load models
 scaler = joblib.load("scaler_final.pkl")       # For classification features (5)
-scaler_reg = joblib.load("scaler_reg_final.pkl")  # For regression features (6)
 lr_model = joblib.load("lr_final.pkl")
 rf_model = joblib.load("rf_final.pkl")
 reg_model = joblib.load("reg_model.pkl")
