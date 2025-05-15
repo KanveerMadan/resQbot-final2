@@ -37,9 +37,9 @@ def predict(input_data: InputData):
         combined_proba = alpha * prob_lr + (1 - alpha) * prob_rf
         earthquake_likely = combined_proba[0] >= threshold
 
-        # Prepare features for regression (6 features including time.full)
+        # Prepare features for regression (5 features including time.full)
         time_numeric = pd.to_datetime(input_data.time_full).timestamp()
-        features_reg = np.array([[input_data.mag, input_data.depth, input_data.latitude, input_data.longitude, input_data.gap, time_numeric]])
+        features_reg = np.array([[input_data.mag, input_data.depth, input_data.latitude, input_data.longitude, time_numeric]])
 
         # Scale regression features if your scaler supports 6 features,
         # otherwise skip scaling or retrain scaler with 6 features.
