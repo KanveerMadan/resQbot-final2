@@ -51,7 +51,7 @@ def predict(input_data: InputData):
                                       input_data.longitude, input_data.time_full]])
             hours_until_event = reg_model.predict(reg_features)[0]
             # Clamp hours to max 24 and min 0
-            hours_until_event = max(0, min(hours_until_event, 24))
+            hours_until_event = max(6, min(hours_until_event, 24))
         else:
             hours_until_event = None
 
