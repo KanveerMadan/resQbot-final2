@@ -8,7 +8,7 @@ import numpy as np
 scaler = joblib.load("scaler_final.pkl")
 lr_model = joblib.load("lr_final.pkl")
 rf_model = joblib.load("rf_final.pkl")
-reg_model = joblib.load("reg_final.pkl")
+reg_model = joblib.load("reg_model.pkl")
 
 alpha = 0.5        # weight between lr_model and rf_model
 threshold = 0.5    # probability threshold
