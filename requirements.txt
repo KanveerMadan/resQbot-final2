@@ -17,8 +17,7 @@ numpy==1.26.4
 # Background scheduler
 apscheduler==3.10.4
 
-# Anthropic Claude (Q&A feature)
-anthropic==0.28.0
+groq==0.9.0
 
 # Language detection (claude_qa.py)
 langdetect==1.0.9

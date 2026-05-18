@@ -1,10 +1,10 @@
 """
-claude_qa.py — Natural language Q&A via Anthropic Claude API for ResQbot.
+claude_qa.py — Natural language Q&A via Groq API for ResQbot.
 
 Responsibilities:
   - Receive free-text messages that didn't match any known command
   - Build a context-rich system prompt with user location + recent local seismic data
-  - Call Claude claude-sonnet-4-20250514 and stream the response back over WhatsApp
+  - Call Groq (llama-3.1-8b-instant) and return the response over WhatsApp
   - Keep replies short enough for WhatsApp (no markdown headers, no bullet walls)
   - Never raise — log errors and send a graceful fallback message to the user
 
@@ -16,10 +16,10 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-import anthropic
+from groq import Groq, APIConnectionError, RateLimitError, APIStatusError
 from sqlmodel import Session, select
 
-from models import AlertLog, EventLog, User, engine
+from models import AlertLog, User, engine
 from usgs import fetch_recent_events
 
 logger = logging.getLogger(__name__)
@@ -28,21 +28,21 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-MODEL             = "claude-sonnet-4-20250514"
-MAX_TOKENS        = 400          # keep WhatsApp replies readable
-MAX_CONTEXT_EVENTS = 5           # recent local events to include in system prompt
+GROQ_API_KEY       = os.getenv("GROQ_API_KEY", "")
+MODEL              = "llama-3.1-8b-instant"
+MAX_TOKENS         = 400
+MAX_CONTEXT_EVENTS = 5
 
 # Lazy client — initialised on first call
-_client: Optional[anthropic.Anthropic] = None
+_client: Optional[Groq] = None
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client() -> Groq:
     global _client
     if _client is None:
-        if not ANTHROPIC_API_KEY:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set")
-        _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        if not GROQ_API_KEY:
+            raise RuntimeError("GROQ_API_KEY is not set")
+        _client = Groq(api_key=GROQ_API_KEY)
     return _client
 
 
@@ -52,7 +52,7 @@ def _get_client() -> anthropic.Anthropic:
 
 def answer_question(phone: str, user_text: str, user: User) -> None:
     """
-    Generate and send a Claude response to a free-text question from `user`.
+    Generate and send a Groq response to a free-text question from `user`.
     Sends a WhatsApp message directly — does not return a value.
     Called from webhook.py after all command checks are exhausted.
     """
@@ -60,31 +60,31 @@ def answer_question(phone: str, user_text: str, user: User) -> None:
 
     try:
         system_prompt = _build_system_prompt(user)
-        reply = _call_claude(system_prompt, user_text)
+        reply = _call_groq(system_prompt, user_text)
     except RuntimeError as exc:
-        logger.error("Claude Q&A unavailable for %s: %s", phone, exc)
+        logger.error("Groq Q&A unavailable for %s: %s", phone, exc)
         wa.send_message(
             phone,
             "I'm unable to answer questions right now. "
             "Reply *HELP* to see available commands.",
         )
         return
-    except anthropic.APIConnectionError:
-        logger.warning("Anthropic API connection error for %s", phone)
+    except APIConnectionError:
+        logger.warning("Groq API connection error for %s", phone)
         wa.send_message(
             phone,
             "I couldn't reach the AI service right now. Please try again in a moment.",
         )
         return
-    except anthropic.RateLimitError:
-        logger.warning("Anthropic rate limit hit for %s", phone)
+    except RateLimitError:
+        logger.warning("Groq rate limit hit for %s", phone)
         wa.send_message(
             phone,
             "I'm handling too many questions right now. Please try again in a minute.",
         )
         return
-    except anthropic.APIStatusError as exc:
-        logger.error("Anthropic API status error %s for %s: %s", exc.status_code, phone, exc.message)
+    except APIStatusError as exc:
+        logger.error("Groq API status error %s for %s: %s", exc.status_code, phone, exc.message)
         wa.send_message(
             phone,
             "Something went wrong on my end. Please try again shortly.",
@@ -106,34 +106,30 @@ def answer_question(phone: str, user_text: str, user: User) -> None:
         return
 
     wa.send_message(phone, reply)
-    logger.info("Claude Q&A response sent to %s (%.60s…)", phone, reply.replace("\n", " "))
+    logger.info("Groq Q&A response sent to %s (%.60s…)", phone, reply.replace("\n", " "))
 
 
 # ---------------------------------------------------------------------------
-# Claude call
+# Groq call
 # ---------------------------------------------------------------------------
 
-def _call_claude(system_prompt: str, user_text: str) -> str:
+def _call_groq(system_prompt: str, user_text: str) -> str:
     """
-    Call Claude with a system prompt and the user's message.
+    Call Groq with a system prompt and the user's message.
     Returns the text response as a plain string.
     """
     client = _get_client()
 
-    message = client.messages.create(
+    response = client.chat.completions.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        system=system_prompt,
         messages=[
-            {"role": "user", "content": user_text},
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_text},
         ],
     )
 
-    # Extract text from content blocks
-    text_blocks = [
-        block.text for block in message.content if hasattr(block, "text")
-    ]
-    return "\n".join(text_blocks).strip()
+    return response.choices[0].message.content.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -141,18 +137,10 @@ def _call_claude(system_prompt: str, user_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _build_system_prompt(user: User) -> str:
-    """
-    Assemble a context-rich system prompt for Claude that includes:
-      - ResQbot's identity and tone constraints
-      - User's location and monitoring profile
-      - Recent seismic events near the user
-      - Recent alerts sent to the user
-      - Strict WhatsApp formatting rules
-    """
-    location_block   = _build_location_block(user)
-    recent_events    = _build_recent_events_block(user)
-    recent_alerts    = _build_recent_alerts_block(user)
-    fault_context    = _build_fault_context(user)
+    location_block = _build_location_block(user)
+    recent_events  = _build_recent_events_block(user)
+    recent_alerts  = _build_recent_alerts_block(user)
+    fault_context  = _build_fault_context(user)
 
     return f"""You are ResQbot, an earthquake monitoring assistant delivering information via WhatsApp.
 
@@ -214,18 +202,13 @@ def _build_fault_context(user: User) -> str:
 
 
 def _build_recent_events_block(user: User) -> str:
-    """
-    Fetch up to MAX_CONTEXT_EVENTS recent events from USGS to give Claude
-    live awareness of what's happening near the user right now.
-    Falls back to 'No recent data' on any error.
-    """
     try:
         events = fetch_recent_events(
             user.latitude,
             user.longitude,
             user.radius_km,
             near_fault=user.near_fault,
-            lookback_minutes=60 * 24,   # last 24 hours for Q&A context
+            lookback_minutes=60 * 24,
         )
         if not events:
             return "No significant seismic events detected near this user in the last 24 hours."
@@ -249,10 +232,6 @@ def _build_recent_events_block(user: User) -> str:
 
 
 def _build_recent_alerts_block(user: User) -> str:
-    """
-    Pull the last 5 alerts sent to this user from AlertLog to give Claude
-    conversation context (e.g. user asking follow-up about an alert they received).
-    """
     try:
         with Session(engine) as session:
             alerts = session.exec(
@@ -270,7 +249,7 @@ def _build_recent_alerts_block(user: User) -> str:
             time_str = alert.sent_at.strftime("%-d %b %Y %H:%M UTC") if alert.sent_at else "unknown time"
             checkin  = f" | check-in: {alert.checkin_response or 'no response'}" if alert.tier == "RED" else ""
             lines.append(
-                f"- {alert.tier} | M{alert.mag:.1f} | {alert.distance_km:.0f} km away | {time_str}{checkin}"
+                f"- {alert.tier} | M{alert.mag:.1f} | {alert.sent_at} | {time_str}{checkin}"
             )
         return "\n".join(lines)
 
