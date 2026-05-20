@@ -228,6 +228,22 @@ ResQbot is designed for **Render free tier** with zero configuration:
 4. Deploy — `render.yaml` handles everything else
 
 ---
+## Docker Deployment
+
+Run ResQbot locally with Docker:
+
+```bash
+docker compose build
+docker compose up
+```
+
+Open:
+
+http://localhost:8000
+
+FastAPI Docs:
+
+http://localhost:8000/docs
 
 ## Data Sources
 
