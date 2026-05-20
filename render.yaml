@@ -18,7 +18,7 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
       - key: DATABASE_URL
-        value: sqlite:///./resqbot.db
+        value: postgresql://neondb_owner:npg_hfp8qATbDsy2@ep-icy-water-aprt8s14-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       - key: MODEL_PATH
         value: combined_model.pkl
       - key: LOG_LEVEL
