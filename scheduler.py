@@ -34,33 +34,23 @@ import whatsapp as wa
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
-# Aftershock cluster detection thresholds
-CLUSTER_MAINSHOCK_MAG   = 5.0    # minimum mainshock magnitude to watch
-CLUSTER_RADIUS_KM       = 50.0   # search radius around mainshock
-CLUSTER_LOOKBACK_HOURS  = 2      # how far back to look for aftershocks
-CLUSTER_MIN_COUNT       = 3      # minimum events to trigger cluster alert
-CLUSTER_MIN_MAG         = 2.5    # minimum aftershock magnitude to count
+CLUSTER_MAINSHOCK_MAG   = 5.0    
+CLUSTER_RADIUS_KM       = 50.0   
+CLUSTER_LOOKBACK_HOURS  = 2      
+CLUSTER_MIN_COUNT       = 3      
+CLUSTER_MIN_MAG         = 2.5    
 
-# Check-in timing
-CHECKIN_DELAY_MINUTES   = 30     # send check-in N minutes after RED alert
-CHECKIN_ESCALATE_MINUTES = 90    # escalate N minutes after RED alert (30 + 60)
+CHECKIN_DELAY_MINUTES   = 30     
+CHECKIN_ESCALATE_MINUTES = 90    
 
-# Quiet hours (local time, inclusive)
+
 QUIET_HOUR_START        = 22     # 10 PM
 QUIET_HOUR_END          = 7      # 7 AM
 
 # Keepalive
 KEEPALIVE_URL           = "http://localhost:8000/health"
 KEEPALIVE_INTERVAL_MIN  = 14
-
-
-# ---------------------------------------------------------------------------
-# Scheduler lifecycle
-# ---------------------------------------------------------------------------
 
 _scheduler: Optional[BackgroundScheduler] = None
 
@@ -74,17 +64,17 @@ def start_scheduler() -> None:
 
     _scheduler = BackgroundScheduler(timezone="UTC")
 
-    # 1. Seismic polling — every 10 minutes
+
     _scheduler.add_job(
         job_poll_seismic,
         trigger=IntervalTrigger(minutes=10),
         id="poll_seismic",
         name="USGS seismic poll",
-        max_instances=1,       # never overlap; USGS is slow sometimes
+        max_instances=1,       
         misfire_grace_time=60,
     )
 
-    # 2. Aftershock cluster check — every 10 minutes (offset by 2 min)
+    
     _scheduler.add_job(
         job_check_aftershocks,
         trigger=IntervalTrigger(minutes=10, start_date=_offset_now(minutes=2)),
@@ -94,7 +84,7 @@ def start_scheduler() -> None:
         misfire_grace_time=60,
     )
 
-    # 3. Check-in escalation — every 5 minutes
+    
     _scheduler.add_job(
         job_check_checkins,
         trigger=IntervalTrigger(minutes=5),
@@ -104,9 +94,6 @@ def start_scheduler() -> None:
         misfire_grace_time=30,
     )
 
-    # 4. Weekly digest — Sunday 9am UTC
-    # Each user's local 9am is approximated by running hourly and filtering
-    # by timezone offset inside the job (avoids 24 separate cron jobs).
     _scheduler.add_job(
         job_weekly_digest,
         trigger=CronTrigger(day_of_week="sun", hour="*", minute=0),
@@ -116,7 +103,6 @@ def start_scheduler() -> None:
         misfire_grace_time=300,
     )
 
-    # 5. Render keepalive — every 14 minutes
     _scheduler.add_job(
         job_keepalive,
         trigger=IntervalTrigger(minutes=KEEPALIVE_INTERVAL_MIN),
@@ -137,10 +123,6 @@ def stop_scheduler() -> None:
         _scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped")
 
-
-# ---------------------------------------------------------------------------
-# Job 1 — Seismic poll
-# ---------------------------------------------------------------------------
 
 def job_poll_seismic() -> None:
     """
@@ -183,7 +165,7 @@ def _poll_for_user(user: User) -> None:
         for result in results:
             _process_result(result, user, session)
 
-    # Cluster warning check — runs after normal alert processing
+    
     try:
         from forecast import generate_forecast
         forecast = generate_forecast(
@@ -248,13 +230,12 @@ def _process_result(result: PredictionResult, user: User, session: Session) -> N
       - Send alert
       - Write AlertLog + EventLog
     """
-    # Log every processed event regardless of alerting
+
     _upsert_event_log(result, session)
 
     if not is_alertable(result):
         return
 
-    # Deduplication — have we already sent this event to this user?
     existing = session.exec(
         select(AlertLog)
         .where(AlertLog.user_id == user.id)
@@ -263,14 +244,13 @@ def _process_result(result: PredictionResult, user: User, session: Session) -> N
     if existing:
         return
 
-    # Quiet hours check
     if _is_quiet_hours(user) and not bypasses_quiet_hours(result):
         logger.debug(
             "Suppressing %s alert for %s (quiet hours)", result.tier, user.phone
         )
         return
 
-    # Send the alert
+    
     sent = wa.send_alert(user.phone, result)
     if not sent:
         logger.warning(
@@ -279,7 +259,7 @@ def _process_result(result: PredictionResult, user: User, session: Session) -> N
         )
         return
 
-    # Persist AlertLog
+    
     alert_log = AlertLog(
         user_id=user.id,
         usgs_event_id=result.usgs_id,
@@ -297,7 +277,7 @@ def _process_result(result: PredictionResult, user: User, session: Session) -> N
         result.tier, result.mag, user.phone, result.usgs_id,
     )
 
-    # Schedule check-in for RED alerts
+
     if result.tier == "RED":
         _schedule_checkin(alert_log, user, session)
 
@@ -334,16 +314,12 @@ def _schedule_checkin(alert_log: AlertLog, user: User, session: Session) -> None
     Mark the AlertLog row so job_check_checkins knows to follow up.
     The actual send timing is handled by that job comparing timestamps.
     """
-    alert_log.checkin_sent    = False   # not sent yet — job will send it
+    alert_log.checkin_sent    = False   
     alert_log.checkin_sent_at = None
     session.add(alert_log)
     session.commit()
     logger.info("Check-in scheduled for user %s alert_log_id=%d", user.phone, alert_log.id)
 
-
-# ---------------------------------------------------------------------------
-# Job 2 — Aftershock cluster detection
-# ---------------------------------------------------------------------------
 
 def job_check_aftershocks() -> None:
     """
@@ -356,7 +332,7 @@ def job_check_aftershocks() -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=CLUSTER_LOOKBACK_HOURS)
 
     with Session(engine) as session:
-        # Find recent major events across all alert logs
+        
         major_alerts = session.exec(
             select(AlertLog)
             .join(EventLog, AlertLog.usgs_event_id == EventLog.usgs_event_id)
@@ -367,7 +343,7 @@ def job_check_aftershocks() -> None:
         if not major_alerts:
             return
 
-        # Deduplicate mainshocks — one cluster check per unique event
+        
         seen_mainshocks: set[str] = set()
 
         for alert in major_alerts:
@@ -375,14 +351,14 @@ def job_check_aftershocks() -> None:
                 continue
             seen_mainshocks.add(alert.usgs_event_id)
 
-            # Get mainshock epicentre from EventLog
+            
             event_log = session.exec(
                 select(EventLog).where(EventLog.usgs_event_id == alert.usgs_event_id)
             ).first()
             if not event_log:
                 continue
 
-            # Fetch aftershocks near the epicentre
+            
             aftershocks = fetch_events_for_aftershock_check(
                 event_log.latitude,
                 event_log.longitude,
@@ -391,7 +367,7 @@ def job_check_aftershocks() -> None:
                 min_mag=CLUSTER_MIN_MAG,
             )
 
-            # Exclude the mainshock itself
+            
             aftershocks = [
                 e for e in aftershocks if e.get("usgs_id") != alert.usgs_event_id
             ]
@@ -404,8 +380,7 @@ def job_check_aftershocks() -> None:
                 len(aftershocks), alert.usgs_event_id,
             )
 
-            # Alert all users who received the original mainshock alert
-            # and haven't received a cluster alert for this mainshock yet
+            
             mainshock_user_ids = session.exec(
                 select(AlertLog.user_id)
                 .where(AlertLog.usgs_event_id == alert.usgs_event_id)
@@ -429,7 +404,7 @@ def _send_cluster_alert_if_needed(
     if not user or not user.active:
         return
 
-    # Dedup: use a synthetic event ID for the cluster alert
+    
     cluster_event_id = f"cluster_{mainshock_id}"
     existing = session.exec(
         select(AlertLog)
@@ -465,10 +440,6 @@ def _send_cluster_alert_if_needed(
     session.commit()
     logger.info("Cluster alert sent to user %s for mainshock %s", user.phone, mainshock_id)
 
-
-# ---------------------------------------------------------------------------
-# Job 3 — Check-in escalation
-# ---------------------------------------------------------------------------
 
 def job_check_checkins() -> None:
     """
@@ -540,10 +511,6 @@ def _escalate_unanswered_checkins(now: datetime, session: Session) -> None:
     session.commit()
 
 
-# ---------------------------------------------------------------------------
-# Job 4 — Weekly digest
-# ---------------------------------------------------------------------------
-
 def job_weekly_digest() -> None:
     """
     Run every Sunday, every hour UTC.
@@ -574,7 +541,7 @@ def _send_digest_to_user(user: User) -> None:
     if sent:
         logger.info("Weekly digest sent to %s (%d events)", user.phone, len(events))
 
-    # Send updated forecast with the weekly digest
+    
     try:
         from forecast import generate_forecast
         forecast = generate_forecast(
@@ -585,10 +552,6 @@ def _send_digest_to_user(user: User) -> None:
     except Exception as exc:
         logger.warning("Weekly forecast failed for %s: %s", user.phone, exc)
 
-
-# ---------------------------------------------------------------------------
-# Job 5 — Render keepalive
-# ---------------------------------------------------------------------------
 
 def job_keepalive() -> None:
     """
@@ -604,10 +567,6 @@ def job_keepalive() -> None:
         logger.debug("Keepalive ping failed (non-critical): %s", exc)
 
 
-# ---------------------------------------------------------------------------
-# Quiet hours helper
-# ---------------------------------------------------------------------------
-
 def _is_quiet_hours(user: User) -> bool:
     """
     Return True if the user's local time falls between QUIET_HOUR_START (22)
@@ -617,16 +576,12 @@ def _is_quiet_hours(user: User) -> bool:
     local_hour = (now_utc.hour + user.timezone_offset) % 24
 
     if QUIET_HOUR_START <= QUIET_HOUR_END:
-        # Same-day range (unusual — would be e.g. 2am–6am)
+        
         return QUIET_HOUR_START <= local_hour < QUIET_HOUR_END
     else:
-        # Overnight range: 22 → 7 wraps midnight
+        
         return local_hour >= QUIET_HOUR_START or local_hour < QUIET_HOUR_END
 
-
-# ---------------------------------------------------------------------------
-# Misc helpers
-# ---------------------------------------------------------------------------
 
 def _offset_now(minutes: int = 0) -> datetime:
     """Return a UTC datetime offset by `minutes` from now — used for job staggering."""

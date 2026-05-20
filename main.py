@@ -30,10 +30,6 @@ from scheduler import start_scheduler, stop_scheduler
 import webhook
 import dashboard
 
-# ---------------------------------------------------------------------------
-# Logging — configure before anything else imports logging
-# ---------------------------------------------------------------------------
-
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 logging.basicConfig(
@@ -43,17 +39,13 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# Quieten noisy third-party loggers
+
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.INFO)
 logging.getLogger("anthropic").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Lifespan — startup / shutdown
-# ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,7 +55,7 @@ async def lifespan(app: FastAPI):
     """
     logger.info("ResQbot starting up…")
 
-    # 1. Initialise database (creates tables if they don't exist)
+    
     try:
         create_db_and_tables()
         logger.info("Database initialised")
@@ -71,7 +63,7 @@ async def lifespan(app: FastAPI):
         logger.critical("Database init failed — cannot start: %s", exc)
         raise
 
-    # 2. Warm the model bundle so the first poll cycle doesn't pay cold-load cost
+    
     try:
         from prediction import _load_bundle
         bundle = _load_bundle()
@@ -85,7 +77,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Model pre-load failed (non-fatal): %s", exc)
 
-    # 3. Start background scheduler
+    
     try:
         start_scheduler()
         logger.info("Background scheduler started")
@@ -96,7 +88,7 @@ async def lifespan(app: FastAPI):
     logger.info("ResQbot is ready")
     yield
 
-    # ── Shutdown ────────────────────────────────────────────────────────────
+    
     logger.info("ResQbot shutting down…")
     try:
         stop_scheduler()
@@ -104,10 +96,6 @@ async def lifespan(app: FastAPI):
         logger.warning("Scheduler shutdown error (non-fatal): %s", exc)
     logger.info("Shutdown complete")
 
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="ResQbot",
@@ -118,14 +106,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── Routers ──────────────────────────────────────────────────────────────────
 app.include_router(webhook.router)
 app.include_router(dashboard.router)
-
-
-# ---------------------------------------------------------------------------
-# Core routes
-# ---------------------------------------------------------------------------
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -147,10 +129,6 @@ def health():
         "version": "1.0.0",
     }
 
-
-# ---------------------------------------------------------------------------
-# Debug / manual test endpoint
-# ---------------------------------------------------------------------------
 
 class PredictRequest(BaseModel):
     latitude:  float
@@ -212,10 +190,6 @@ def manual_predict(req: PredictRequest):
     }
 
 
-# ---------------------------------------------------------------------------
-# Global exception handler — ensure 500s never leak stack traces to clients
-# ---------------------------------------------------------------------------
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     logger.exception("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
@@ -225,10 +199,6 @@ async def global_exception_handler(request, exc):
     )
 
 
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
@@ -236,6 +206,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         log_level=LOG_LEVEL.lower(),
-        # Single worker on Render free tier — multiple workers need shared DB
+        
         workers=1,
     )

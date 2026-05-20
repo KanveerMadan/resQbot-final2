@@ -33,44 +33,37 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 USGS_BASE = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 
-# Lookback windows for rate calculation
+
 LONG_WINDOW_DAYS  = 90    # base rate calculated over 90 days
 SHORT_WINDOW_DAYS = 7     # recent activity window for cluster detection
 CLUSTER_WINDOW_DAYS = 2   # very recent window for foreshock signal
 
-# Forecast horizons
+
 HORIZON_24H = 1
 HORIZON_72H = 3
 HORIZON_7D  = 7
 
-# Magnitude thresholds
+
 MIN_MAG_BASE    = 4.0   # base rate counts M4+
 MIN_MAG_FAULT   = 3.5   # fault-zone users count M3.5+
 MIN_MAG_CLUSTER = 3.0   # cluster detection uses M3+ (catches foreshock swarms)
 
-# Cluster multiplier cap — prevent runaway scores during active sequences
+
 MAX_CLUSTER_MULTIPLIER = 3.0
 
-# Fault zone baseline boost
+
 FAULT_BASELINE_BOOST = 1.4
 
-# Risk tier thresholds (probability of M4+ in 24h)
+
 RISK_VERY_LOW  = 0.05   # < 5%
 RISK_LOW       = 0.15   # 5–15%
 RISK_MODERATE  = 0.30   # 15–30%
 RISK_ELEVATED  = 0.50   # 30–50%
 # > 50% = High
 
-
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ForecastResult:
@@ -102,10 +95,6 @@ class ForecastResult:
     whatsapp_message: str
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
-
 def generate_forecast(
     latitude: float,
     longitude: float,
@@ -119,7 +108,7 @@ def generate_forecast(
     try:
         now = datetime.now(timezone.utc)
 
-        # Fetch long-window events for base rate
+        
         long_events = _fetch_events(
             latitude, longitude, radius_km,
             start=now - timedelta(days=LONG_WINDOW_DAYS),
@@ -127,7 +116,7 @@ def generate_forecast(
             min_mag=MIN_MAG_FAULT if near_fault else MIN_MAG_BASE,
         )
 
-        # Fetch short-window events for cluster detection
+        
         short_events = _fetch_events(
             latitude, longitude, radius_km,
             start=now - timedelta(days=SHORT_WINDOW_DAYS),
@@ -135,7 +124,7 @@ def generate_forecast(
             min_mag=MIN_MAG_CLUSTER,
         )
 
-        # Fetch very recent events for foreshock signal
+        
         cluster_events = _fetch_events(
             latitude, longitude, radius_km,
             start=now - timedelta(days=CLUSTER_WINDOW_DAYS),
@@ -143,7 +132,7 @@ def generate_forecast(
             min_mag=MIN_MAG_CLUSTER,
         )
 
-        # Also fetch M5+ events for higher-magnitude probability
+        
         m5_events = _fetch_events(
             latitude, longitude, radius_km,
             start=now - timedelta(days=LONG_WINDOW_DAYS),
@@ -165,10 +154,6 @@ def generate_forecast(
         return None
 
 
-# ---------------------------------------------------------------------------
-# Core computation
-# ---------------------------------------------------------------------------
-
 def _compute_forecast(
     long_events: list,
     short_events: list,
@@ -180,22 +165,22 @@ def _compute_forecast(
 
     event_count_90d = len(long_events)
 
-    # ── Base rate (events per day over long window) ──────────────────────────
+    
     base_rate = event_count_90d / LONG_WINDOW_DAYS
 
-    # Fault zone baseline boost
+    
     if near_fault:
         base_rate *= FAULT_BASELINE_BOOST
 
-    # ── Recent rate (events per day over short window) ───────────────────────
+    
     recent_rate = len(short_events) / SHORT_WINDOW_DAYS
 
-    # ── Cluster multiplier ───────────────────────────────────────────────────
+    
     cluster_flag = False
     cluster_multiplier = 1.0
 
     if base_rate > 0 and recent_rate > base_rate * 1.5:
-        # Recent activity is 1.5x above baseline — possible foreshock swarm
+        
         cluster_flag = True
         raw_multiplier = recent_rate / base_rate
         cluster_multiplier = min(raw_multiplier, MAX_CLUSTER_MULTIPLIER)
@@ -204,34 +189,33 @@ def _compute_forecast(
             recent_rate, base_rate, cluster_multiplier,
         )
 
-    # Very recent cluster (last 48h) gets an additional boost
+    
     if len(cluster_events) >= 3:
         cluster_flag = True
         cluster_multiplier = min(cluster_multiplier * 1.3, MAX_CLUSTER_MULTIPLIER)
 
-    # ── Effective rate ───────────────────────────────────────────────────────
+    
     effective_rate = base_rate * cluster_multiplier
 
-    # ── M5+ rate ─────────────────────────────────────────────────────────────
+    
     m5_base_rate = len(m5_events) / LONG_WINDOW_DAYS
     if near_fault:
         m5_base_rate *= FAULT_BASELINE_BOOST
     m5_effective_rate = m5_base_rate * cluster_multiplier
 
-    # ── Poisson probabilities ────────────────────────────────────────────────
-    # P(at least 1 event in T days) = 1 - e^(-rate * T)
+    
     prob_m4_24h = _poisson_prob(effective_rate, HORIZON_24H)
     prob_m4_72h = _poisson_prob(effective_rate, HORIZON_72H)
     prob_m4_7d  = _poisson_prob(effective_rate, HORIZON_7D)
     prob_m5_72h = _poisson_prob(m5_effective_rate, HORIZON_72H)
 
-    # ── Risk label ───────────────────────────────────────────────────────────
+    
     risk_label = _risk_label(prob_m4_24h)
 
-    # ── Days since last event ────────────────────────────────────────────────
+    
     last_event_days = _days_since_last(long_events, now)
 
-    # ── Build WhatsApp message ───────────────────────────────────────────────
+    
     message = _build_message(
         prob_m4_24h=prob_m4_24h,
         prob_m4_72h=prob_m4_72h,
@@ -258,10 +242,6 @@ def _compute_forecast(
         whatsapp_message=message,
     )
 
-
-# ---------------------------------------------------------------------------
-# USGS fetch
-# ---------------------------------------------------------------------------
 
 def _fetch_events(
     latitude: float,
@@ -292,10 +272,6 @@ def _fetch_events(
         logger.warning("USGS fetch failed (start=%s min_mag=%s): %s", start.date(), min_mag, exc)
         return []
 
-
-# ---------------------------------------------------------------------------
-# Math helpers
-# ---------------------------------------------------------------------------
 
 def _poisson_prob(rate_per_day: float, days: int) -> float:
     """
@@ -350,10 +326,6 @@ def _days_since_last(events: list, now: datetime) -> Optional[float]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Message builder
-# ---------------------------------------------------------------------------
-
 def _build_message(
     prob_m4_24h: float,
     prob_m4_72h: float,
@@ -368,13 +340,13 @@ def _build_message(
 
     emoji = _risk_emoji(risk_label)
 
-    # Format probabilities as percentages
+    
     p24  = f"{prob_m4_24h * 100:.1f}%"
     p72  = f"{prob_m4_72h * 100:.1f}%"
     p7d  = f"{prob_m4_7d  * 100:.1f}%"
     p5_72 = f"{prob_m5_72h * 100:.1f}%"
 
-    # Last event string
+    
     if last_event_days is None:
         last_str = "No M4+ events recorded in past 90 days"
     elif last_event_days < 1:
@@ -384,7 +356,7 @@ def _build_message(
     else:
         last_str = f"{int(last_event_days)} days ago"
 
-    # Cluster warning
+    
     cluster_line = ""
     if cluster_flag:
         cluster_line = (
@@ -392,7 +364,7 @@ def _build_message(
             "seismic cluster in progress. Stay alert."
         )
 
-    # Fault line note
+    
     fault_line = ""
     if near_fault:
         fault_line = "\n📍 You are near a tectonic plate boundary — baseline risk is higher than average."
@@ -422,10 +394,6 @@ def _build_message(
 
     return msg
 
-
-# ---------------------------------------------------------------------------
-# Convenience: short threat summary (used in onboarding + weekly digest)
-# ---------------------------------------------------------------------------
 
 def short_threat_summary(result: ForecastResult) -> str:
     """

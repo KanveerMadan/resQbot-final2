@@ -21,10 +21,6 @@ from prediction import PredictionResult, TIER_RED, TIER_ORANGE, TIER_YELLOW, TIE
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
 WHATSAPP_TOKEN    = os.getenv("WHATSAPP_TOKEN", "")
 PHONE_NUMBER_ID   = os.getenv("PHONE_NUMBER_ID", "")
 API_VERSION       = "v19.0"
@@ -32,10 +28,6 @@ API_BASE          = f"https://graph.facebook.com/{API_VERSION}/{PHONE_NUMBER_ID}
 
 _TIMEOUT_SECONDS  = 15
 
-
-# ---------------------------------------------------------------------------
-# Low-level send primitives
-# ---------------------------------------------------------------------------
 
 def send_message(to: str, text: str) -> bool:
     """
@@ -105,10 +97,6 @@ def mark_as_read(message_id: str) -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Onboarding messages
-# ---------------------------------------------------------------------------
-
 def send_welcome(to: str) -> bool:
     """Sent on first contact or unrecognised opener before location is shared."""
     text = (
@@ -173,10 +161,6 @@ def send_invalid_radius(to: str) -> bool:
     )
     return send_message(to, text)
 
-
-# ---------------------------------------------------------------------------
-# Alert messages
-# ---------------------------------------------------------------------------
 
 _TIER_META = {
     TIER_GREEN:  ("🟢", "GREEN WATCH"),
@@ -350,10 +334,6 @@ def send_cluster_alert(to: str, event_count: int, epicentre_place: str, radius_k
     return send_message(to, text)
 
 
-# ---------------------------------------------------------------------------
-# Check-in messages
-# ---------------------------------------------------------------------------
-
 def send_checkin_prompt(to: str) -> bool:
     text = (
         "🔴 *Are you safe?*\n\n"
@@ -402,10 +382,6 @@ def send_help_response(to: str) -> bool:
     return send_message(to, text)
 
 
-# ---------------------------------------------------------------------------
-# Command response messages
-# ---------------------------------------------------------------------------
-
 def send_stop_confirmation(to: str) -> bool:
     text = (
         "🔕 Alerts paused. You won't receive any earthquake notifications.\n\n"
@@ -450,10 +426,6 @@ def send_no_location_yet(to: str) -> bool:
     return send_message(to, text)
 
 
-# ---------------------------------------------------------------------------
-# History command
-# ---------------------------------------------------------------------------
-
 def send_history(to: str, events: list[dict]) -> bool:
     if not events:
         text = (
@@ -478,10 +450,6 @@ def send_history(to: str, events: list[dict]) -> bool:
     lines.append("\nReply *HELP* for commands or ask me anything about earthquakes.")
     return send_message(to, "\n".join(lines))
 
-
-# ---------------------------------------------------------------------------
-# Weekly digest
-# ---------------------------------------------------------------------------
 
 def send_weekly_digest(to: str, events: list[dict], radius_km: int) -> bool:
     count = len(events)
@@ -512,11 +480,6 @@ def send_weekly_digest(to: str, events: list[dict], radius_km: int) -> bool:
         f"Reply *HISTORY* for individual events or ask me anything."
     )
     return send_message(to, text)
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 def _fmt_event_time(event_time) -> str:
     if event_time is None:

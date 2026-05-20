@@ -32,20 +32,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin")
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
 # Use a separate secret for signing cookies; fall back to password-derived value
 ADMIN_SECRET   = os.getenv("ADMIN_SECRET", hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest())
 COOKIE_NAME    = "resqbot_admin"
 COOKIE_TTL_H   = 8   # hours before re-login required
 
-
-# ---------------------------------------------------------------------------
-# Auth helpers
-# ---------------------------------------------------------------------------
 
 def _make_token(ts: int) -> str:
     """Create an HMAC-signed token embedding a Unix timestamp."""
@@ -71,10 +63,6 @@ def _verify_token(token: str) -> bool:
 def _is_authed(session_token: Optional[str] = None) -> bool:
     return bool(session_token and _verify_token(session_token))
 
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 @router.get("/", response_class=HTMLResponse)
 async def admin_root(resqbot_admin: Optional[str] = Cookie(default=None)):
@@ -134,10 +122,6 @@ async def api_stats(resqbot_admin: Optional[str] = Cookie(default=None)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return JSONResponse(_collect_stats())
 
-
-# ---------------------------------------------------------------------------
-# Stats collector
-# ---------------------------------------------------------------------------
 
 def _collect_stats() -> dict:
     """Query the DB and return a dict of dashboard metrics."""
@@ -264,10 +248,6 @@ def _get_event_place(event: Optional[EventLog]) -> str:
         return "—"
     return f"M{event.mag:.1f} at {event.latitude:.2f}°, {event.longitude:.2f}°"
 
-
-# ---------------------------------------------------------------------------
-# HTML renderers
-# ---------------------------------------------------------------------------
 
 def _render_login(error: bool = False) -> str:
     error_html = (

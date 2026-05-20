@@ -18,31 +18,18 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 USGS_BASE = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 
-# Minimum magnitude for real-time polling (lowered to 3.5 for fault-zone users;
-# the caller passes whichever threshold is appropriate).
 DEFAULT_MIN_MAG = 4.0
 FAULT_ZONE_MIN_MAG = 3.5
 
-# How far back to look on each polling cycle (slightly more than the scheduler
-# interval to avoid missing events at boundary).
 POLL_LOOKBACK_MINUTES = 12
 
-# Haversine Earth radius
 _EARTH_RADIUS_KM = 6371.0
 
-# Request timeout — Render free tier; be generous but don't hang forever.
 _TIMEOUT_SECONDS = 20
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def fetch_recent_events(
     latitude: float,
@@ -130,7 +117,7 @@ def fetch_historical_summary(
     last_event_date: Optional[str] = None
     last_event_distance_km: Optional[float] = None
 
-    # Features are ordered newest-first from USGS
+    
     for i, feature in enumerate(features):
         props = feature.get("properties", {})
         coords = feature.get("geometry", {}).get("coordinates", [])
@@ -232,10 +219,6 @@ def fetch_events_for_aftershock_check(
     return events
 
 
-# ---------------------------------------------------------------------------
-# Haversine distance (exposed so prediction.py / scheduler.py can import it)
-# ---------------------------------------------------------------------------
-
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Return the great-circle distance in km between two lat/lon points."""
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -244,10 +227,6 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2) ** 2
     return 2 * _EARTH_RADIUS_KM * math.asin(math.sqrt(a))
 
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 def _query_usgs(params: dict) -> list:
     """
@@ -313,7 +292,7 @@ def _normalise_feature(
             logger.debug("Skipping feature %s — null critical field", usgs_id)
             return None
 
-        # gap: USGS frequently returns null; default to 180.0 (model trained with this)
+        
         gap = _safe_float(props.get("gap")) or 180.0
 
         place = props.get("place") or "Unknown location"
@@ -367,7 +346,7 @@ def _fmt_human(dt: Optional[datetime]) -> Optional[str]:
     """Format datetime as a readable string for WhatsApp messages."""
     if dt is None:
         return None
-    return dt.strftime("%-d %b %Y")  # e.g. "3 Apr 2023"
+    return dt.strftime("%-d %b %Y")  
 
 
 def _empty_summary() -> dict:

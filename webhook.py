@@ -33,30 +33,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
 VERIFY_TOKEN    = os.getenv("VERIFY_TOKEN", "")
-APP_SECRET      = os.getenv("APP_SECRET", "")   # optional payload signature check
-
-# Radius map — user replies "1" / "2" / "3"
+APP_SECRET      = os.getenv("APP_SECRET", "")   
 RADIUS_MAP = {"1": 100, "2": 300, "3": 500}
 
-# Tectonic plate boundary GeoJSON path (checked at registration)
 PLATE_BOUNDARY_GEOJSON = os.getenv("PLATE_BOUNDARY_GEOJSON", "plate_boundaries.geojson")
 FAULT_ZONE_RADIUS_KM   = 200.0
 
-# Seen message IDs — in-memory dedup for the current process lifetime.
-# On Render free tier a single worker handles all traffic; this is sufficient.
-# For multi-worker deployments, move to Redis or a DB column.
 _seen_message_ids: set[str] = set()
-_MAX_SEEN = 10_000   # cap memory growth
-
-
-# ---------------------------------------------------------------------------
-# GET /webhook — Meta verification handshake
-# ---------------------------------------------------------------------------
+_MAX_SEEN = 10_000   
 
 @router.get("/webhook")
 def verify_webhook(
@@ -79,17 +64,13 @@ def verify_webhook(
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
-# ---------------------------------------------------------------------------
-# POST /webhook — inbound message handler
-# ---------------------------------------------------------------------------
-
 @router.post("/webhook")
 async def receive_webhook(request: Request) -> dict:
     """
     Entry point for all inbound WhatsApp messages.
     Always returns {"status": "ok"} with 200 — Meta requires this.
     """
-    # Optional: verify X-Hub-Signature-256 if APP_SECRET is configured
+    
     if APP_SECRET:
         await _verify_signature(request)
 
@@ -99,10 +80,10 @@ async def receive_webhook(request: Request) -> dict:
         logger.warning("Received non-JSON webhook payload")
         return {"status": "ok"}
 
-    # Meta wraps everything in a deeply nested structure; extract messages safely
+    
     messages = _extract_messages(body)
     if not messages:
-        # Status updates (delivered, read receipts) arrive here — ignore silently
+        
         return {"status": "ok"}
 
     for message, phone in messages:
@@ -110,26 +91,20 @@ async def receive_webhook(request: Request) -> dict:
             await _route_message(message, phone)
         except Exception as exc:
             logger.exception("Unhandled error routing message from %s: %s", phone, exc)
-        # Always continue — one bad message must not block the rest
+        
 
     return {"status": "ok"}
 
-
-# ---------------------------------------------------------------------------
-# Message router
-# ---------------------------------------------------------------------------
 
 async def _route_message(message: dict, phone: str) -> None:
     """Dispatch a single inbound message to the right handler."""
     message_id  = message.get("id", "")
     msg_type    = message.get("type", "")
 
-    # Deduplication — Meta occasionally replays webhooks
     if _is_duplicate(message_id):
         logger.debug("Duplicate message_id %s — skipping", message_id)
         return
 
-    # Mark as read immediately (gives user double blue ticks)
     if message_id:
         wa.mark_as_read(message_id)
 
@@ -144,7 +119,7 @@ async def _route_message(message: dict, phone: str) -> None:
             await _handle_text(text, phone, user, session)
 
         else:
-            # Stickers, images, audio, etc. — nudge the user gently
+            
             if user and user.onboarding_state == "active":
                 wa.send_message(
                     phone,
@@ -154,10 +129,6 @@ async def _route_message(message: dict, phone: str) -> None:
             elif not user:
                 wa.send_welcome(phone)
 
-
-# ---------------------------------------------------------------------------
-# Location handler
-# ---------------------------------------------------------------------------
 
 async def _handle_location(
     message: dict,
@@ -177,17 +148,13 @@ async def _handle_location(
 
     lat, lon = float(lat), float(lon)
 
-    # Tectonic proximity check
     near_fault = _check_near_fault(lat, lon)
 
-    # Timezone offset from longitude (rough but free — no API needed)
     tz_offset = _longitude_to_tz_offset(lon)
 
-    # Reverse-geocode place name — use USGS place from a quick query; fall back gracefully
     place_name = _rough_place_name(lat, lon)
 
     if user is None:
-        # New user — create record
         user = User(
             phone=phone,
             latitude=lat,
@@ -201,7 +168,6 @@ async def _handle_location(
         session.refresh(user)
         logger.info("New user registered: %s near_fault=%s", phone, near_fault)
     else:
-        # Existing user updating their location
         user.latitude        = lat
         user.longitude       = lon
         user.near_fault      = near_fault
@@ -214,11 +180,6 @@ async def _handle_location(
 
     wa.send_radius_prompt(phone, place_name, near_fault)
 
-
-# ---------------------------------------------------------------------------
-# Text handler
-# ---------------------------------------------------------------------------
-
 async def _handle_text(
     text: str,
     phone: str,
@@ -228,12 +189,10 @@ async def _handle_text(
     """Route a text message: onboarding radius reply, command, or free-text Q&A."""
     upper = text.upper().strip()
 
-    # ── No user record yet ──────────────────────────────────────────────────
     if user is None:
         wa.send_welcome(phone)
         return
 
-    # ── Onboarding: awaiting radius pick ────────────────────────────────────
     if user.onboarding_state == "awaiting_radius":
         if text.strip() in RADIUS_MAP:
             radius_km = RADIUS_MAP[text.strip()]
@@ -244,13 +203,12 @@ async def _handle_text(
             session.commit()
             logger.info("User %s set radius=%d km", phone, radius_km)
 
-            # Fetch 5-year historical summary (may take a moment — acceptable in webhook)
+            
             historical = fetch_historical_summary(
                 user.latitude, user.longitude, radius_km
             )
             wa.send_onboarding_complete(phone, radius_km, historical)
 
-            # Send probabilistic forecast after onboarding
             try:
                 from forecast import generate_forecast
                 forecast = generate_forecast(
@@ -265,12 +223,11 @@ async def _handle_text(
             wa.send_invalid_radius(phone)
         return
 
-    # ── Awaiting location (shouldn't normally receive text here) ────────────
+
     if user.onboarding_state == "awaiting_location":
         wa.send_welcome(phone)
         return
 
-    # ── Hard commands (always handled regardless of active/stopped state) ───
     if upper == "STOP":
         if not user.active:
             wa.send_already_stopped(phone)
@@ -301,34 +258,25 @@ async def _handle_text(
         wa.send_help_response(phone)
         return
 
-    # ── Check-in responses (SAFE / HELP after RED alert) ────────────────────
+    
     if upper == "SAFE":
         _handle_checkin_response(phone, "SAFE", session)
         wa.send_checkin_acknowledged_safe(phone)
         return
 
-    # HELP is already caught above — also records check-in response
-    # (handled there; the HELP message covers both check-in and command contexts)
     if upper == "SAMPLE ALERT":
         wa.send_sample_alert(phone)
         return
     
-    # ── HISTORY command ──────────────────────────────────────────────────────
     if upper == "HISTORY":
         from usgs import fetch_events_for_digest
         events = fetch_events_for_digest(user.latitude, user.longitude, user.radius_km, user.near_fault)
         wa.send_history(phone, events)
         return
 
-    # ── Free-text → Claude Q&A ───────────────────────────────────────────────
-    # Import here to keep startup fast (claude_qa loads the Anthropic client)
     from claude_qa import answer_question
     answer_question(phone, text, user)
 
-
-# ---------------------------------------------------------------------------
-# Check-in response recorder
-# ---------------------------------------------------------------------------
 
 def _handle_checkin_response(phone: str, response: str, session: Session) -> None:
     """
@@ -357,10 +305,6 @@ def _handle_checkin_response(phone: str, response: str, session: Session) -> Non
         logger.info("Check-in response '%s' recorded for user %s", response, phone)
 
 
-# ---------------------------------------------------------------------------
-# Payload parsing helpers
-# ---------------------------------------------------------------------------
-
 def _extract_messages(body: dict) -> list[tuple[dict, str]]:
     """
     Walk Meta's nested webhook payload and return a flat list of
@@ -386,16 +330,16 @@ def _extract_messages(body: dict) -> list[tuple[dict, str]]:
                 messages = value.get("messages", [])
                 contacts = value.get("contacts", [])
 
-                # Build a wa_id → display phone map from contacts list
+                
                 contact_map = {}
                 for c in contacts:
                     wa_id = c.get("wa_id", "")
-                    # Normalise to E.164 with + prefix
+                    
                     phone = f"+{wa_id}" if not wa_id.startswith("+") else wa_id
                     contact_map[wa_id] = phone
 
                 for msg in messages:
-                    # Phone comes from the message's own "from" field
+                    
                     raw_from = msg.get("from", "")
                     phone = contact_map.get(raw_from) or (
                         f"+{raw_from}" if not raw_from.startswith("+") else raw_from
@@ -419,19 +363,14 @@ def _is_duplicate(message_id: str) -> bool:
         return False
     if message_id in _seen_message_ids:
         return True
-    # Trim set if it grows too large
+    
     if len(_seen_message_ids) >= _MAX_SEEN:
-        # Remove ~10% oldest entries (sets are unordered; just discard arbitrary slice)
+        
         to_remove = list(_seen_message_ids)[:_MAX_SEEN // 10]
         for mid in to_remove:
             _seen_message_ids.discard(mid)
     _seen_message_ids.add(message_id)
     return False
-
-
-# ---------------------------------------------------------------------------
-# Signature verification
-# ---------------------------------------------------------------------------
 
 async def _verify_signature(request: Request) -> None:
     """
@@ -454,10 +393,6 @@ async def _verify_signature(request: Request) -> None:
         logger.warning("Webhook signature mismatch — possible spoofed request")
         raise HTTPException(status_code=403, detail="Invalid signature")
 
-
-# ---------------------------------------------------------------------------
-# Geospatial helpers
-# ---------------------------------------------------------------------------
 
 def _check_near_fault(lat: float, lon: float) -> bool:
     """
@@ -515,19 +450,17 @@ def _rough_place_name(lat: float, lon: float) -> str:
     """
     try:
         from usgs import fetch_recent_events
-        # Use a small radius and low mag to find any nearby reference point
+        
         events = fetch_recent_events(lat, lon, radius_km=500, near_fault=False, lookback_minutes=60 * 24 * 30)
         if events:
             place = events[0].get("place", "")
-            # USGS place strings are like "12km NNE of Dehradun, India"
-            # Extract the city/country part after "of " if present
+            
             if " of " in place:
                 return place.split(" of ", 1)[1]
             return place
     except Exception as exc:
         logger.debug("Could not fetch place name: %s", exc)
 
-    # Final fallback — coordinate string
     lat_dir = "N" if lat >= 0 else "S"
     lon_dir = "E" if lon >= 0 else "W"
     return f"{abs(lat):.2f}°{lat_dir}, {abs(lon):.2f}°{lon_dir}"

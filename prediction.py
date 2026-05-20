@@ -20,20 +20,16 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 MODEL_PATH = os.getenv("MODEL_PATH", "combined_model.pkl")
 
-# Urgency tier labels
+
 TIER_GREEN = "GREEN"
 TIER_YELLOW = "YELLOW"
 TIER_ORANGE = "ORANGE"
 TIER_RED = "RED"
 TIER_BELOW = "BELOW_THRESHOLD"
 
-# Probability threshold for each model's binary vote
+
 VOTE_THRESHOLD = 0.5
 
 # Urgency rules (mag + depth)
@@ -49,10 +45,6 @@ _ORANGE_SHALLOW_DEPTH = 30.0
 _YELLOW_MAG = 4.5
 _GREEN_MAG = 4.0
 
-
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
 
 @dataclass
 class PredictionResult:
@@ -87,13 +79,9 @@ class PredictionResult:
     earthquake_likely: bool
     tier: str
     place: str
-    event_time: Optional[object]   # datetime | None
+    event_time: Optional[object]   
     distance_km: float
 
-
-# ---------------------------------------------------------------------------
-# Lazy model loader (thread-safe singleton)
-# ---------------------------------------------------------------------------
 
 _bundle: Optional[dict] = None
 _bundle_lock = Lock()
@@ -109,12 +97,12 @@ def _load_bundle() -> Optional[dict]:
         return _bundle
 
     with _bundle_lock:
-        # Double-checked locking: another thread may have loaded while we waited
+        
         if _bundle is not None:
             return _bundle
         try:
             loaded = joblib.load(MODEL_PATH)
-            # Validate expected keys
+            
             required = {"lr_model", "rf_model", "scaler"}
             missing = required - set(loaded.keys())
             if missing:
@@ -138,10 +126,6 @@ def _get_models():
     return bundle["lr_model"], bundle["rf_model"], bundle["scaler"]
 
 
-# ---------------------------------------------------------------------------
-# Core prediction
-# ---------------------------------------------------------------------------
-
 def predict(event: dict) -> PredictionResult:
     """
     Run ML inference and urgency classification on a single normalised event dict
@@ -160,7 +144,7 @@ def predict(event: dict) -> PredictionResult:
     event_time   = event.get("event_time")
     distance_km  = float(event.get("distance_km", 0.0))
 
-    # Feature vector — 5 features, exact order the scaler was fitted on
+    
     features = np.array([[latitude, longitude, depth, mag, gap]], dtype=float)
 
     lr_score = 0.0
@@ -189,7 +173,7 @@ def predict(event: dict) -> PredictionResult:
         )
 
     except RuntimeError as exc:
-        # Model unavailable — log once, return safe default
+        
         logger.error("Prediction skipped for %s: %s", usgs_id, exc)
 
     except Exception as exc:
@@ -215,10 +199,6 @@ def predict(event: dict) -> PredictionResult:
     )
 
 
-# ---------------------------------------------------------------------------
-# Urgency tier classifier (pure function — no model dependency)
-# ---------------------------------------------------------------------------
-
 def classify_tier(mag: float, depth: float, earthquake_likely: bool) -> str:
     """
     Map magnitude + depth + model vote to a 4-tier urgency string.
@@ -235,7 +215,7 @@ def classify_tier(mag: float, depth: float, earthquake_likely: bool) -> str:
     — the ML vote informs confidence score, not the alert gate at these extremes.
     This is an intentional safety-over-precision choice.
     """
-    # If neither model voted AND magnitude is below green floor → suppress
+    
     if not earthquake_likely and mag < _GREEN_MAG:
         return TIER_BELOW
 
@@ -266,10 +246,6 @@ def bypasses_quiet_hours(result: PredictionResult) -> bool:
     """RED alerts go out regardless of quiet hours (10pm–7am local)."""
     return result.tier == TIER_RED
 
-
-# ---------------------------------------------------------------------------
-# Batch helper (used by scheduler's per-user event loop)
-# ---------------------------------------------------------------------------
 
 def predict_batch(events: list[dict]) -> list[PredictionResult]:
     """
