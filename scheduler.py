@@ -183,6 +183,61 @@ def _poll_for_user(user: User) -> None:
         for result in results:
             _process_result(result, user, session)
 
+    # Cluster warning check — runs after normal alert processing
+    try:
+        from forecast import generate_forecast
+        forecast = generate_forecast(
+            user.latitude, user.longitude, user.radius_km, user.near_fault
+        )
+        if forecast and forecast.cluster_flag:
+            _send_cluster_warning_if_needed(user, forecast)
+    except Exception as exc:
+        logger.warning("Cluster warning check failed for %s: %s", user.phone, exc)
+
+
+def _send_cluster_warning_if_needed(user: User, forecast) -> None:
+    """
+    Send a cluster warning alert if recent seismicity is significantly
+    above baseline. Deduplicates by storing a synthetic event ID in AlertLog
+    keyed to the current UTC date — one warning per user per day maximum.
+    """
+    from datetime import date
+    today_key = f"cluster_warning_{date.today().isoformat()}"
+
+    with Session(engine) as session:
+        existing = session.exec(
+            select(AlertLog)
+            .where(AlertLog.user_id == user.id)
+            .where(AlertLog.usgs_event_id == today_key)
+        ).first()
+        if existing:
+            return
+
+        if _is_quiet_hours(user):
+            return
+
+        sent = wa.send_cluster_warning(
+            user.phone,
+            event_count=int(forecast.recent_rate * 2),  # approx count over 48h
+            radius_km=float(user.radius_km),
+            base_rate_per_day=forecast.base_rate,
+            recent_rate_per_day=forecast.recent_rate,
+            multiplier=forecast.recent_rate / max(forecast.base_rate, 0.001),
+            prob_m4_24h=forecast.prob_m4_24h,
+            prob_m5_72h=forecast.prob_m5_72h,
+        )
+        if sent:
+            cluster_log = AlertLog(
+                user_id=user.id,
+                usgs_event_id=today_key,
+                tier="ORANGE",
+                mag=0.0,
+                depth=0.0,
+                distance_km=0.0,
+            )
+            session.add(cluster_log)
+            session.commit()
+            logger.info("Cluster warning sent to %s", user.phone)
 
 def _process_result(result: PredictionResult, user: User, session: Session) -> None:
     """

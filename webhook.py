@@ -309,7 +309,10 @@ async def _handle_text(
 
     # HELP is already caught above — also records check-in response
     # (handled there; the HELP message covers both check-in and command contexts)
-
+    if upper == "SAMPLE ALERT":
+        wa.send_sample_alert(phone)
+        return
+    
     # ── HISTORY command ──────────────────────────────────────────────────────
     if upper == "HISTORY":
         from usgs import fetch_events_for_digest

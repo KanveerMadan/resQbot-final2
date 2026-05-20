@@ -123,11 +123,6 @@ def send_welcome(to: str) -> bool:
 
 
 def send_radius_prompt(to: str, place_name: str, near_fault: bool) -> bool:
-    """
-    Sent after a location pin is received. Asks the user to pick a watch radius.
-    `place_name` is a human-readable string derived from reverse-geocoding or
-    the USGS place field; falls back to "your area" if unavailable.
-    """
     fault_note = (
         "\n\n⚠️ *Note:* You are within 200 km of a tectonic plate boundary — "
         "elevated baseline risk zone. I'll apply a lower alert threshold for you."
@@ -150,10 +145,6 @@ def send_onboarding_complete(
     radius_km: int,
     historical: Optional[dict] = None,
 ) -> bool:
-    """
-    Sent after the user picks a radius. Includes the 5-year historical summary
-    if available, then the command reference.
-    """
     history_block = _build_history_block(historical)
 
     text = (
@@ -166,6 +157,7 @@ def send_onboarding_complete(
         "• *START* — resume alerts\n"
         "• *UPDATE LOCATION* — change your location\n"
         "• *HISTORY* — recent events near you\n"
+        "• *SAMPLE ALERT* — see what an alert looks like\n"
         "• *HELP* — show this list\n\n"
         "You can also ask me anything — e.g. _\"What does a 5.5 earthquake feel like?\"_"
     )
@@ -173,7 +165,6 @@ def send_onboarding_complete(
 
 
 def send_invalid_radius(to: str) -> bool:
-    """Sent when the user replies something other than 1/2/3 during onboarding."""
     text = (
         "Please reply with *1*, *2*, or *3* to set your alert radius:\n\n"
         "1️⃣  100 km\n"
@@ -239,6 +230,110 @@ def send_alert(to: str, result: PredictionResult) -> bool:
     return send_message(to, text)
 
 
+def send_sample_alert(to: str) -> bool:
+    """
+    Sent when user types SAMPLE ALERT.
+    Shows one example of each alert tier so users know what to expect.
+    """
+    text = (
+        "📋 *Here's what ResQbot alerts look like:*\n\n"
+
+        "🟢 *GREEN WATCH*\n"
+        "────────────────────\n"
+        "📌 Rohtak, Haryana, India\n"
+        "📏 *85 km* from your location\n"
+        "💥 Magnitude *4.1* | Depth *22 km*\n"
+        "🕐 19 May 2026, 08:14 UTC\n"
+        "🤖 Confidence: 1/2 models\n"
+        "────────────────────\n"
+        "Low-level activity detected. No immediate action needed — "
+        "stay aware of your surroundings.\n\n"
+
+        "🟡 *YELLOW ADVISORY*\n"
+        "────────────────────\n"
+        "📌 Muzaffarnagar, Uttar Pradesh, India\n"
+        "📏 *132 km* from your location\n"
+        "💥 Magnitude *4.8* | Depth *35 km*\n"
+        "🕐 19 May 2026, 11:42 UTC\n"
+        "🤖 Confidence: 2/2 models\n"
+        "────────────────────\n"
+        "Moderate seismic activity detected. Low immediate risk — "
+        "stay informed and avoid damaged structures.\n\n"
+
+        "🟠 *ORANGE WARNING*\n"
+        "────────────────────\n"
+        "📌 Pithoragarh, Uttarakhand, India\n"
+        "📏 *261 km* from your location\n"
+        "💥 Magnitude *5.7* | Depth *18 km*\n"
+        "🕐 19 May 2026, 14:09 UTC\n"
+        "🤖 Confidence: 2/2 models\n"
+        "────────────────────\n"
+        "Significant seismic activity detected. *Be prepared to take "
+        "cover.* Move away from windows and heavy objects.\n\n"
+
+        "🔴 *RED EMERGENCY*\n"
+        "────────────────────\n"
+        "📌 Chamoli, Uttarakhand, India\n"
+        "📏 *298 km* from your location\n"
+        "💥 Magnitude *6.8* | Depth *10 km*\n"
+        "🕐 19 May 2026, 16:33 UTC\n"
+        "🤖 Confidence: 2/2 models\n"
+        "────────────────────\n"
+        "⚠️ *MAJOR EARTHQUAKE DETECTED.* Drop, cover, and hold on. "
+        "After shaking stops, evacuate if structurally unsafe. "
+        "Expect aftershocks.\n\n"
+
+        "_These are examples only. Real alerts fire automatically when "
+        "USGS detects seismic activity near you._"
+    )
+    return send_message(to, text)
+
+
+def send_cluster_warning(
+    to: str,
+    event_count: int,
+    radius_km: float,
+    base_rate_per_day: float,
+    recent_rate_per_day: float,
+    multiplier: float,
+    prob_m4_24h: float,
+    prob_m5_72h: float,
+) -> bool:
+    """
+    Sent when a foreshock swarm is detected — recent seismicity rate is
+    significantly above the long-term baseline for this region.
+    This is a precautionary statistical signal, not a deterministic prediction.
+    """
+    base_str   = f"{base_rate_per_day:.2f} events/day"
+    recent_str = f"{recent_rate_per_day:.2f} events/day"
+    p4_str     = f"{prob_m4_24h * 100:.1f}%"
+    p5_str     = f"{prob_m5_72h * 100:.1f}%"
+    mult_str   = f"{multiplier:.1f}x"
+
+    text = (
+        "⚠️ *SEISMIC CLUSTER DETECTED*\n"
+        "────────────────────\n"
+        f"📊 {event_count} small earthquakes recorded near you in the past 48 hours\n\n"
+        f"📈 *Activity rate:* {recent_str} ({mult_str} above your region's normal)\n"
+        f"📉 *Normal baseline:* {base_str}\n"
+        f"────────────────────\n"
+        f"🔮 *Short-term outlook:*\n"
+        f"Probability of M4+ in next 24h: *{p4_str}*\n"
+        f"Probability of M5+ in next 72h: *{p5_str}*\n"
+        f"────────────────────\n"
+        "This pattern *may* indicate elevated short-term risk. "
+        "No major event has occurred yet.\n\n"
+        "*Precautionary steps:*\n"
+        "• Identify safe spots in each room (under sturdy table, away from windows)\n"
+        "• Keep emergency kit accessible\n"
+        "• Stay informed via official channels\n\n"
+        "⚡ _This is a statistical signal based on seismicity patterns, "
+        "not a guaranteed prediction. Most swarms do not lead to major earthquakes._\n\n"
+        "🇮🇳 India NDMA: ndma.gov.in | Emergency: *112*"
+    )
+    return send_message(to, text)
+
+
 def send_cluster_alert(to: str, event_count: int, epicentre_place: str, radius_km: float) -> bool:
     """
     Sent when 3+ aftershocks are detected within 50 km in 2 hours after M5.0+.
@@ -256,11 +351,10 @@ def send_cluster_alert(to: str, event_count: int, epicentre_place: str, radius_k
 
 
 # ---------------------------------------------------------------------------
-# Check-in messages (are-you-safe flow for RED alerts)
+# Check-in messages
 # ---------------------------------------------------------------------------
 
 def send_checkin_prompt(to: str) -> bool:
-    """Sent 30 minutes after a RED alert."""
     text = (
         "🔴 *Are you safe?*\n\n"
         "A major earthquake was detected near you 30 minutes ago.\n\n"
@@ -280,10 +374,6 @@ def send_checkin_acknowledged_safe(to: str) -> bool:
 
 
 def send_checkin_escalation(to: str) -> bool:
-    """
-    Sent 60 minutes after the check-in prompt if no reply received.
-    Directs the user to emergency services — ResQbot cannot call anyone.
-    """
     text = (
         "🆘 *No response received.*\n\n"
         "If you are in an emergency, please contact your local emergency "
@@ -296,7 +386,6 @@ def send_checkin_escalation(to: str) -> bool:
 
 
 def send_help_response(to: str) -> bool:
-    """Sent when user replies HELP to a check-in or sends HELP as a command."""
     text = (
         "🆘 *Emergency services:*\n"
         "🇮🇳 India: *112*\n"
@@ -306,6 +395,7 @@ def send_help_response(to: str) -> bool:
         "• *START* — resume alerts\n"
         "• *UPDATE LOCATION* — change your pin\n"
         "• *HISTORY* — recent events near you\n"
+        "• *SAMPLE ALERT* — see what alerts look like\n"
         "• *HELP* — show this list\n\n"
         "Ask me anything about earthquakes and I'll do my best to answer."
     )
@@ -353,7 +443,6 @@ def send_update_location_prompt(to: str) -> bool:
 
 
 def send_no_location_yet(to: str) -> bool:
-    """Sent when a command arrives before the user has shared a location."""
     text = (
         "I don't have your location yet. Please share it first:\n"
         "📎 Tap the paperclip → *Location* → *Send Your Current Location*"
@@ -366,11 +455,6 @@ def send_no_location_yet(to: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def send_history(to: str, events: list[dict]) -> bool:
-    """
-    Send the HISTORY command response — up to 5 recent events near the user.
-    `events` is a list of normalised event dicts from usgs.fetch_recent_events
-    or a cached EventLog query in scheduler.py.
-    """
     if not events:
         text = (
             "📭 No significant seismic events detected near your location "
@@ -400,11 +484,6 @@ def send_history(to: str, events: list[dict]) -> bool:
 # ---------------------------------------------------------------------------
 
 def send_weekly_digest(to: str, events: list[dict], radius_km: int) -> bool:
-    """
-    Sunday 9am local — summary of the past 7 days.
-    `events` is the full list from usgs.fetch_events_for_digest; this function
-    builds the summary stats itself.
-    """
     count = len(events)
 
     if count == 0:
@@ -416,7 +495,6 @@ def send_weekly_digest(to: str, events: list[dict], radius_km: int) -> bool:
         )
         return send_message(to, text)
 
-    # Find the strongest event
     strongest = max(events, key=lambda e: e.get("mag", 0.0))
     s_mag     = strongest.get("mag", 0.0)
     s_place   = strongest.get("place", "Unknown location")
@@ -441,7 +519,6 @@ def send_weekly_digest(to: str, events: list[dict], radius_km: int) -> bool:
 # ---------------------------------------------------------------------------
 
 def _fmt_event_time(event_time) -> str:
-    """Format a UTC datetime for display in alert messages."""
     if event_time is None:
         return "Time unknown"
     try:
@@ -453,10 +530,6 @@ def _fmt_event_time(event_time) -> str:
 
 
 def _build_history_block(historical: Optional[dict]) -> str:
-    """
-    Build the historical summary paragraph for the onboarding complete message.
-    Returns an empty string if no data is available.
-    """
     if not historical or historical.get("total_events", 0) == 0:
         return (
             "\n📭 No significant seismic events recorded near you in the "
@@ -480,6 +553,6 @@ def _build_history_block(historical: Optional[dict]) -> str:
         lines.append(f"• Strongest: *M{max_mag:.1f}* on {max_date}")
     if last_mag is not None:
         lines.append(f"• Most recent: M{last_mag:.1f} on {last_date}{dist_str}")
-    lines.append("")   # blank line before command reference
+    lines.append("")
 
     return "\n".join(lines) + "\n"
