@@ -519,6 +519,17 @@ def _send_digest_to_user(user: User) -> None:
     if sent:
         logger.info("Weekly digest sent to %s (%d events)", user.phone, len(events))
 
+    # Send updated forecast with the weekly digest
+    try:
+        from forecast import generate_forecast
+        forecast = generate_forecast(
+            user.latitude, user.longitude, user.radius_km, user.near_fault
+        )
+        if forecast:
+            wa.send_message(user.phone, forecast.whatsapp_message)
+    except Exception as exc:
+        logger.warning("Weekly forecast failed for %s: %s", user.phone, exc)
+
 
 # ---------------------------------------------------------------------------
 # Job 5 — Render keepalive

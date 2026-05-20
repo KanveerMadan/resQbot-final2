@@ -249,6 +249,18 @@ async def _handle_text(
                 user.latitude, user.longitude, radius_km
             )
             wa.send_onboarding_complete(phone, radius_km, historical)
+
+            # Send probabilistic forecast after onboarding
+            try:
+                from forecast import generate_forecast
+                forecast = generate_forecast(
+                    user.latitude, user.longitude, radius_km, user.near_fault
+                )
+                if forecast:
+                    wa.send_message(phone, forecast.whatsapp_message)
+            except Exception as exc:
+                logger.warning("Forecast generation failed for %s: %s", phone, exc)
+
         else:
             wa.send_invalid_radius(phone)
         return
